@@ -6,8 +6,10 @@ Only one voice plays at a time, even with several sessions open: a new reply cut
 
 ## Requirements
 
-- **macOS.** That is the only OS it has been tested on. Playback uses ffmpeg's `audiotoolbox` output, which is macOS only, so it will not play on Linux or Windows as written.
-- **ffmpeg**: `brew install ffmpeg`
+- **macOS or Windows.**
+  - macOS: playback uses ffmpeg's `audiotoolbox` output. Install ffmpeg: `brew install ffmpeg`.
+  - Windows: nothing to install. `hooks/windows.ps1` fetches the clip with Windows PowerShell and plays it with Windows' own sound player. The clip plays once it has fully arrived, not while it streams. Tested on Windows 11.
+  - Linux: not supported yet.
 - **A Fish Audio account and API key.** Get a key at <https://fish.audio/app/api-keys/>.
 - **Claude Code** with a build that loads hooks modules. Tested on 2.1.309.
 
@@ -22,7 +24,7 @@ Then restart Claude Code, or run `/reload-plugins` in an open session.
 
 ### Add your Fish Audio key
 
-Open the .env at `~/.claude/claudespeak/.env`, paste your Fish Audio API key after `FISH_API_KEY=`, save.
+Open the .env at `~/.claude/claudespeak/.env` (on Windows `%USERPROFILE%\.claude\claudespeak\.env`), paste your Fish Audio API key after `FISH_API_KEY=`, save.
 
 The file does not exist until claudespeak makes it, so run `/speak key` to create it and open it. If you skip this, your first finished reply does the same thing and tells you the path. The file is created readable only by you, and it lives outside the plugin folder so updates don't wipe it. A `FISH_API_KEY` environment variable takes priority over the file.
 

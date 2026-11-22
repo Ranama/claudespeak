@@ -70,24 +70,26 @@ const world = (
     w.toasts.push(e.text)
     return { value: undefined }
   })
+  // Run on Windows, the engine spells these Mac paths with the drive in front (D:\home\me\...).
+  const unix = (path: string): string => path.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/')
   on('fs.exists', ($, e) => ({
     value:
-      (opts.hasFfmpeg !== false && e.path === '/opt/homebrew/bin/ffmpeg') ||
-      e.path === '/usr/bin/open' ||
-      files.has(e.path) ||
-      (e.path === ENV_FILE && opts.envText !== undefined),
+      (opts.hasFfmpeg !== false && unix(e.path) === '/opt/homebrew/bin/ffmpeg') ||
+      unix(e.path) === '/usr/bin/open' ||
+      files.has(unix(e.path)) ||
+      (unix(e.path) === ENV_FILE && opts.envText !== undefined),
   }))
   on('fs.write', ($, e) => {
-    w.writes.push({ path: e.path, text: e.text })
-    files.set(e.path, e.text)
+    w.writes.push({ path: unix(e.path), text: e.text })
+    files.set(unix(e.path), e.text)
     return { value: undefined }
   })
   on('fs.read', ($, e) => {
-    if (e.path === ENV_FILE) {
+    if (unix(e.path) === ENV_FILE) {
       if (opts.envText === undefined) throw new Error('ENOENT')
       return { value: opts.envText }
     }
-    const text = files.get(e.path)
+    const text = files.get(unix(e.path))
     if (text === undefined) throw new Error('ENOENT')
     return { value: text }
   })

@@ -11,6 +11,8 @@ const FISH = 'https://api.fish.audio'
 const CURL = '/usr/bin/curl'
 const PKILL = '/usr/bin/pkill'
 const FFMPEG_PATHS = ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg']
+/** Windows has no curl pipeline, pkill or ffmpeg of its own: this script does those jobs with PowerShell. */
+const WINDOWS_SCRIPT = 'hooks/windows.ps1'
 const MAX_SPOKEN = 300
 
 /** How fast it talks: Fish's prosody.speed, 0.5 to 2.0. Raise or lower this one number. */
@@ -185,19 +187,50 @@ const st: {
 
 let cfg: VoiceConfig = DEFAULTS
 
+/** Windows plays through PowerShell and its own sound player; macOS through curl and ffmpeg. */
+async function isWindows($: $): Promise<boolean> {
+  return (await $.env.get('OS')) === 'Windows_NT'
+}
+
+/** A path as Windows spells it, for PowerShell's arguments and for the person to read. */
+const winPath = (path: string): string => path.replace(/\//g, '\\')
+
+/** The command line for one action of hooks/windows.ps1: play, stop or open. */
+async function windowsArgv($: $, action: 'play' | 'stop' | 'open', ...args: string[]): Promise<string[]> {
+  const root = (await $.env.get('SystemRoot')) ?? 'C:\\Windows'
+  return [
+    `${root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`,
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    winPath(`${$.plugin.root}/${WINDOWS_SCRIPT}`),
+    '-Action',
+    action,
+    ...args,
+  ]
+}
+
 function stopSpeech($: $): void {
   st.speechGen += 1
-  // KILL, not TERM: on TERM ffmpeg plays out everything it has already queued.
-  if (st.streamTag !== undefined) void $.process.run([PKILL, '-KILL', '-f', st.streamTag]).catch(() => undefined)
+  const tag = st.streamTag
   st.streamTag = undefined
+  if (tag === undefined) return
+  void (async () => {
+    // KILL, not TERM: on TERM ffmpeg plays out everything it has already queued.
+    const argv = (await isWindows($)) ? await windowsArgv($, 'stop', '-Tag', tag) : [PKILL, '-KILL', '-f', tag]
+    await $.process.run(argv)
+  })().catch(() => undefined)
 }
 
 async function dataPath($: $, file: string): Promise<string> {
-  return `${await homeData($)}/${file}`
+  return `${await homeData($)}${(await isWindows($)) ? '\\' : '/'}${file}`
 }
 
 async function writeData($: $, file: string, text: string): Promise<void> {
-  await $.process.run(['/bin/mkdir', '-p', '-m', '700', await homeData($)])
+  // On Windows the folder is in the person's own profile, private already; fs.write makes it.
+  if (!(await isWindows($))) await $.process.run(['/bin/mkdir', '-p', '-m', '700', await homeData($)])
   await $.fs.write(await dataPath($, file), text)
 }
 
@@ -210,11 +243,16 @@ async function isSettingOn($: $): Promise<boolean> {
 /** Cuts speech in every session, and tells a reply still being summarised to stay quiet. */
 async function stopEverySpeech($: $): Promise<void> {
   stopSpeech($)
-  await $.process.run([PKILL, '-KILL', '-f', ANY_SPEECH]).catch(() => undefined)
+  const argv = (await isWindows($)) ? await windowsArgv($, 'stop') : [PKILL, '-KILL', '-f', ANY_SPEECH]
+  await $.process.run(argv).catch(() => undefined)
   await writeData($, CURRENT_FILE, `stopped ${await $.clock.now()}`)
 }
 
 async function tmpDir($: $): Promise<string> {
+  if (await isWindows($)) {
+    const dir = (await $.env.get('TEMP')) ?? (await $.env.get('TMP')) ?? `${(await $.env.get('USERPROFILE')) ?? 'C:'}\\AppData\\Local\\Temp`
+    return winPath(dir).replace(/\\+$/, '')
+  }
   const dir = (await $.env.get('TMPDIR')) ?? '/tmp'
   return dir.replace(/\/+$/, '') || '/tmp'
 }
@@ -224,6 +262,11 @@ async function rm($: $, ...paths: string[]): Promise<void> {
 }
 
 async function homeData($: $): Promise<string> {
+  if (await isWindows($)) {
+    // HOME is seldom set on Windows: the profile folder is USERPROFILE.
+    const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? ''
+    return winPath(`${home.replace(/[\\/]+$/, '')}/${DATA_DIR}`)
+  }
   return `${(await $.env.get('HOME')) ?? ''}/${DATA_DIR}`
 }
 
@@ -239,6 +282,11 @@ async function apiKey($: $): Promise<string | undefined> {
 async function ensureEnvFile($: $): Promise<boolean> {
   const path = await dataPath($, ENV_FILE)
   if (await $.fs.exists(path).catch(() => false)) return false
+  if (await isWindows($)) {
+    // The person's profile folder is private to them already; fs.write makes the folders.
+    await $.fs.write(path, await $.fs.read(`${$.plugin.root}/.env.example`).catch(() => ENV_TEMPLATE))
+    return true
+  }
   await $.process.run(['/bin/mkdir', '-p', '-m', '700', await homeData($)])
   await $.process.run(['/bin/sh', '-c', 'umask 077; : > "$1"', 'claudespeak', path])
   const template = await $.fs.read(`${$.plugin.root}/.env.example`).catch(() => ENV_TEMPLATE)
@@ -250,6 +298,10 @@ async function ensureEnvFile($: $): Promise<boolean> {
 /** Opens the .env in the default text editor where the platform has a way to. */
 async function openEnvFile($: $): Promise<boolean> {
   const path = await dataPath($, ENV_FILE)
+  if (await isWindows($)) {
+    const ran = await $.process.run(await windowsArgv($, 'open', '-Path', path)).catch(() => undefined)
+    return ran?.exitCode === 0
+  }
   const opened = (await $.fs.exists('/usr/bin/open').catch(() => false))
     ? await $.process.run(['/usr/bin/open', '-t', path]).catch(() => undefined)
     : await $.process.run(['/usr/bin/env', 'xdg-open', path]).catch(() => undefined)
@@ -324,6 +376,42 @@ async function streamSpeech($: $, key: string, ffmpeg: string, text: string): Pr
   }
 }
 
+/**
+ * Windows: hooks/windows.ps1 claims the speech, stops every other voice, fetches the clip from Fish (the key on
+ * its standard input, never on its command line) and plays it with Windows' own sound player.
+ */
+async function streamSpeechWindows($: $, key: string, text: string): Promise<void> {
+  const tag = `${TAG_PREFIX}${await $.clock.now()}`
+  const bodyPath = `${await tmpDir($)}\\${tag}.json`
+  const current = await dataPath($, CURRENT_FILE)
+  await $.fs.write(bodyPath, ttsBody(text, cfg.voiceId))
+  st.streamTag = tag
+  const gen = st.speechGen
+  try {
+    const ran = await $.process.run(
+      await windowsArgv(
+        $, 'play',
+        '-Tag', tag, '-Body', bodyPath, '-Model', cfg.ttsModel, '-Url', `${FISH}/v1/tts`,
+        '-Current', current, '-Rate', String(SAMPLE_RATE),
+      ),
+      { stdin: `Bearer ${key}\n`, timeoutMs: 180_000 },
+    )
+    const status = /returned error: (\d+)/.exec(ran.stderr)?.[1]
+    if (status !== undefined) $.ui.toast(fishError('text-to-speech', Number(status), ''), { timeoutMs: 8000 })
+    else if (ran.exitCode !== 0) {
+      // A newer reply here, /speak stop, or another session's voice ended it: that is no failure.
+      const claim = (await $.fs.read(current).catch(() => '')).trim()
+      if (gen === st.speechGen && claim === tag) {
+        const last = ran.stderr.trim().split(/\r?\n/).pop()?.trim().slice(0, 80) ?? ''
+        $.ui.toast(`claudespeak: playback failed: ${last}`, { timeoutMs: 8000 })
+      }
+    }
+  } finally {
+    // The script deletes the request file itself, and sweeps up after a player that was stopped.
+    if (st.streamTag === tag) st.streamTag = undefined
+  }
+}
+
 async function speak($: $, answer: string): Promise<void> {
   stopSpeech($)
   const gen = st.speechGen
@@ -334,6 +422,7 @@ async function speak($: $, answer: string): Promise<void> {
   if (line === '' || gen !== st.speechGen) return
   const current = await $.fs.read(await dataPath($, CURRENT_FILE)).catch(() => '')
   if (current.startsWith('stopped ') && Number(current.slice(8)) > startedAt) return
+  if (await isWindows($)) return streamSpeechWindows($, key, line)
   const ffmpeg = await findFfmpeg($)
   if (ffmpeg === undefined) {
     $.ui.toast('ffmpeg not found: brew install ffmpeg', { timeoutMs: 8000 })

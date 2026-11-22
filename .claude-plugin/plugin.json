@@ -1,9 +1,11 @@
 {
   "name": "claudespeak",
-  "version": "0.1.0",
-  "author": { "name": "albertshiney" },
+  "version": "0.2.0",
+  "author": {
+    "name": "albertshiney"
+  },
   "repository": "https://github.com/albertshiney/claudespeak",
-  "description": "Reads a 1-3 sentence summary of each finished Claude Code reply aloud with Fish Audio, one voice at a time across sessions",
+  "description": "Reads a 1-3 sentence summary of each finished Claude Code reply aloud with Fish Audio, one voice at a time across sessions; macOS and Windows",
   "userConfig": {
     "voiceId": {
       "type": "string",
@@ -15,7 +17,11 @@
       "type": "string",
       "title": "Fish TTS model",
       "description": "Sent as the `model` header on /v1/tts",
-      "options": ["drama-3", "s2.1-pro", "s2-pro"],
+      "options": [
+        "drama-3",
+        "s2.1-pro",
+        "s2-pro"
+      ],
       "default": "drama-3"
     },
     "summaryModel": {
