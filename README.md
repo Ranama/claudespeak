@@ -16,9 +16,11 @@ Only one voice plays at a time, even with several sessions open: a new reply cut
 ## Install
 
 ```
-claude plugin marketplace add albertshiney/claudespeak
+claude plugin marketplace add Ranama/claudespeak
 claude plugin install claudespeak@claudespeak
 ```
+
+This is a fork of [albertshiney/claudespeak](https://github.com/albertshiney/claudespeak) that adds Windows support. The original works on macOS only.
 
 Then restart Claude Code, or run `/reload-plugins` in an open session.
 
